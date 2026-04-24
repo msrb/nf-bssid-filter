@@ -94,7 +94,7 @@ static int parse_mac(const char *str, u8 *mac)
  */
 static int parse_allowlist(const char *macs)
 {
-    char *str, *token, *saveptr;
+    char *str, *token;
     int count = 0;
 
     if (!macs || strlen(macs) == 0)
