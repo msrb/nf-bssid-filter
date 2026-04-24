@@ -22,8 +22,11 @@
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <linux/if_ether.h>
+#include <linux/if_arp.h>
 #include <linux/ieee80211.h>
 #include <linux/etherdevice.h>
+#include <linux/rtnetlink.h>
+#include <linux/netfilter_ipv4.h>
 #include <linux/list.h>
 #include <net/cfg80211.h>
 
