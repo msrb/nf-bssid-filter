@@ -24,8 +24,6 @@
 #include <linux/if_ether.h>
 #include <linux/ieee80211.h>
 #include <linux/etherdevice.h>
-#include <linux/sysfs.h>
-#include <linux/kobject.h>
 #include <linux/list.h>
 #include <net/cfg80211.h>
 
@@ -69,9 +67,6 @@ struct wifi_iface {
 
 static struct wifi_iface wifi_interfaces[MAX_WIFI_INTERFACES];
 static int num_wifi_interfaces = 0;
-
-/* Kobject for sysfs */
-static struct kobject *wifi_kobj;
 
 /*
  * Parse MAC address from string (format: aa:bb:cc:dd:ee:ff)
@@ -190,82 +185,6 @@ static unsigned int wifi_filter_hook(void *priv,
 
     return NF_DROP;
 }
-
-/*
- * Sysfs attribute: stats
- * Shows packet statistics
- */
-static ssize_t stats_show(struct kobject *kobj, struct kobj_attribute *attr,
-                          char *buf)
-{
-    return sprintf(buf, "Total packets:   %lld\n"
-                        "Allowed packets: %lld\n"
-                        "Blocked packets: %lld\n",
-                   atomic64_read(&packets_total),
-                   atomic64_read(&packets_allowed),
-                   atomic64_read(&packets_blocked));
-}
-
-static struct kobj_attribute stats_attr = __ATTR_RO(stats);
-
-/*
- * Sysfs attribute: allowlist
- * Shows current allowlist
- */
-static ssize_t allowlist_show(struct kobject *kobj, struct kobj_attribute *attr,
-                              char *buf)
-{
-    int i, len = 0;
-
-    len += sprintf(buf + len, "Allowed BSSIDs (%d/%d):\n",
-                   num_allowed, MAX_ALLOWED_BSSIDS);
-
-    for (i = 0; i < num_allowed; i++) {
-        len += sprintf(buf + len, "  %pM\n", allowlist[i]);
-    }
-
-    if (num_allowed == 0)
-        len += sprintf(buf + len, "  (none - all traffic allowed)\n");
-
-    return len;
-}
-
-static struct kobj_attribute allowlist_attr = __ATTR_RO(allowlist);
-
-static struct attribute *wifi_attrs[] = {
-    &stats_attr.attr,
-    &allowlist_attr.attr,
-    &interfaces_attr.attr,
-    NULL,
-};
-
-static struct attribute_group wifi_attr_group = {
-    .attrs = wifi_attrs,
-};
-
-/*
- * Sysfs attribute: interfaces
- * Shows which interfaces are being filtered
- */
-static ssize_t interfaces_show(struct kobject *kobj, struct kobj_attribute *attr,
-                               char *buf)
-{
-    int i, len = 0;
-
-    len += sprintf(buf + len, "Filtered WiFi interfaces (%d/%d):\n",
-                   num_wifi_interfaces, MAX_WIFI_INTERFACES);
-
-    for (i = 0; i < num_wifi_interfaces; i++) {
-        len += sprintf(buf + len, "  %s\n", wifi_interfaces[i].name);
-    }
-
-    if (num_wifi_interfaces == 0)
-        len += sprintf(buf + len, "  (none)\n");
-
-    return len;
-}
-
-static struct kobj_attribute interfaces_attr = __ATTR_RO(interfaces);
 
 /*
  * Check if a network device is a WiFi interface
@@ -419,24 +338,7 @@ static int __init nf_bssid_filter_init(void)
         pr_info("nf_bssid_filter: Registered hooks on %d WiFi interface(s)\n", ret);
     }
 
-    /* Create sysfs directory */
-    wifi_kobj = kobject_create_and_add("nf_bssid_filter", kernel_kobj);
-    if (!wifi_kobj) {
-        pr_warn("nf_bssid_filter: Failed to create sysfs entry\n");
-        goto skip_sysfs;
-    }
-
-    ret = sysfs_create_group(wifi_kobj, &wifi_attr_group);
-    if (ret) {
-        pr_warn("nf_bssid_filter: Failed to create sysfs group\n");
-        kobject_put(wifi_kobj);
-        wifi_kobj = NULL;
-    }
-
-skip_sysfs:
     pr_info("nf_bssid_filter: Module loaded successfully\n");
-    pr_info("nf_bssid_filter: Statistics: /sys/kernel/wifi_allowlist/stats\n");
-    pr_info("nf_bssid_filter: Interfaces: /sys/kernel/wifi_allowlist/interfaces\n");
 
     return 0;
 }
@@ -447,12 +349,6 @@ skip_sysfs:
 static void __exit nf_bssid_filter_exit(void)
 {
     pr_info("nf_bssid_filter: Unloading module\n");
-
-    /* Remove sysfs entries */
-    if (wifi_kobj) {
-        sysfs_remove_group(wifi_kobj, &wifi_attr_group);
-        kobject_put(wifi_kobj);
-    }
 
     /* Unregister all netfilter hooks */
     unregister_all_hooks();
