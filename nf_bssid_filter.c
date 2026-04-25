@@ -28,6 +28,8 @@
 #include <linux/rtnetlink.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/list.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
 #include <net/cfg80211.h>
 
 MODULE_LICENSE("GPL");
@@ -70,6 +72,86 @@ struct wifi_iface {
 
 static struct wifi_iface wifi_interfaces[MAX_WIFI_INTERFACES];
 static int num_wifi_interfaces = 0;
+
+/* Sysfs kobject */
+static struct kobject *nf_bssid_kobj;
+
+/*
+ * Sysfs attribute: stats
+ * Shows packet statistics
+ */
+static ssize_t stats_show(struct kobject *kobj, struct kobj_attribute *attr,
+                          char *buf)
+{
+    return sprintf(buf, "Total packets: %lld\nAllowed: %lld\nBlocked: %lld\n",
+                   atomic64_read(&packets_total),
+                   atomic64_read(&packets_allowed),
+                   atomic64_read(&packets_blocked));
+}
+
+/*
+ * Sysfs attribute: allowlist
+ * Shows configured BSSIDs
+ */
+static ssize_t allowlist_show(struct kobject *kobj, struct kobj_attribute *attr,
+                              char *buf)
+{
+    int i;
+    ssize_t len = 0;
+
+    if (num_allowed == 0) {
+        return sprintf(buf, "No BSSIDs configured\n");
+    }
+
+    for (i = 0; i < num_allowed; i++) {
+        len += sprintf(buf + len, "%pM\n", allowlist[i]);
+    }
+
+    return len;
+}
+
+/*
+ * Sysfs attribute: interfaces
+ * Shows which WiFi interfaces are being filtered
+ */
+static ssize_t interfaces_show(struct kobject *kobj, struct kobj_attribute *attr,
+                               char *buf)
+{
+    int i;
+    ssize_t len = 0;
+
+    if (num_wifi_interfaces == 0) {
+        return sprintf(buf, "No interfaces registered\n");
+    }
+
+    for (i = 0; i < num_wifi_interfaces; i++) {
+        len += sprintf(buf + len, "%s\n", wifi_interfaces[i].name);
+    }
+
+    return len;
+}
+
+/* Define sysfs attributes */
+static struct kobj_attribute stats_attribute =
+    __ATTR(stats, 0444, stats_show, NULL);
+
+static struct kobj_attribute allowlist_attribute =
+    __ATTR(allowlist, 0444, allowlist_show, NULL);
+
+static struct kobj_attribute interfaces_attribute =
+    __ATTR(interfaces, 0444, interfaces_show, NULL);
+
+/* Attribute group */
+static struct attribute *nf_bssid_attrs[] = {
+    &stats_attribute.attr,
+    &allowlist_attribute.attr,
+    &interfaces_attribute.attr,
+    NULL,
+};
+
+static struct attribute_group nf_bssid_attr_group = {
+    .attrs = nf_bssid_attrs,
+};
 
 /*
  * Parse MAC address from string (format: aa:bb:cc:dd:ee:ff)
@@ -341,6 +423,22 @@ static int __init nf_bssid_filter_init(void)
         pr_info("nf_bssid_filter: Registered hooks on %d WiFi interface(s)\n", ret);
     }
 
+    /* Create sysfs directory and attributes */
+    nf_bssid_kobj = kobject_create_and_add("nf_bssid_filter", kernel_kobj);
+    if (!nf_bssid_kobj) {
+        pr_warn("nf_bssid_filter: Failed to create sysfs directory\n");
+        /* Continue anyway - sysfs is optional */
+    } else {
+        ret = sysfs_create_group(nf_bssid_kobj, &nf_bssid_attr_group);
+        if (ret) {
+            pr_warn("nf_bssid_filter: Failed to create sysfs attributes: %d\n", ret);
+            kobject_put(nf_bssid_kobj);
+            nf_bssid_kobj = NULL;
+        } else {
+            pr_info("nf_bssid_filter: Sysfs interface created at /sys/kernel/nf_bssid_filter/\n");
+        }
+    }
+
     pr_info("nf_bssid_filter: Module loaded successfully\n");
 
     return 0;
@@ -352,6 +450,12 @@ static int __init nf_bssid_filter_init(void)
 static void __exit nf_bssid_filter_exit(void)
 {
     pr_info("nf_bssid_filter: Unloading module\n");
+
+    /* Remove sysfs interface */
+    if (nf_bssid_kobj) {
+        sysfs_remove_group(nf_bssid_kobj, &nf_bssid_attr_group);
+        kobject_put(nf_bssid_kobj);
+    }
 
     /* Unregister all netfilter hooks */
     unregister_all_hooks();
